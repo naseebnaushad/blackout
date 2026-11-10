@@ -30,26 +30,27 @@ jobs:
           host: 'windows'
           target: 'desktop'
           arch: 'win64_msvc2019_64'
-          modules: 'qtdeclarative'
 
-      - name: Build Blackout with qmake & nmake
-        shell: cmd
+      - name: Configure CMake
         run: |
-          qmake blackout.pro "CONFIG+=release"
-          nmake release
+          cmake -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build Blackout with CMake
+        run: |
+          cmake --build build --config Release
 
       - name: Deploy Qt Runtime with windeployqt
         shell: cmd
         run: |
-          windeployqt --qmldir src --release release\blackout.exe
+          windeployqt --qmldir src --release build\Release\blackout.exe
 
       - name: Package Windows ZIP
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path dist\blackout
-          Copy-Item -Path release\* -Destination dist\blackout -Recurse
+          Copy-Item -Path build\Release\* -Destination dist\blackout -Recurse
           Copy-Item -Path README.md, LICENSE -Destination dist\blackout
-          Compress-Archive -Path dist\blackout -DestinationPath blackout-windows-x64.zip -Force
+          Compress-Archive -Path dist\blackout\* -DestinationPath blackout-windows-x64.zip -Force
 
       - name: Upload Build Artifact
         uses: actions/upload-artifact@v4
