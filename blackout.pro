@@ -1,10 +1,18 @@
-QT += core gui qml quick quickcontrols2 dbus
+QT += core gui qml quick quickcontrols2
+
+unix:!macx {
+    QT += dbus
+    LIBS += -lLayerShellQtInterface
+}
+
+win32 {
+    LIBS += -luser32 -lshell32
+    RC_FILE = pkgbuild/blackout.rc
+}
 
 CONFIG += c++17 release
 TARGET = blackout
 TEMPLATE = app
-
-LIBS += -lLayerShellQtInterface
 
 HEADERS += \
     src/backend.h \

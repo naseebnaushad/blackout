@@ -1,5 +1,5 @@
 pkgname=blackout
-pkgver=0.2.0
+pkgver=0.2.1
 pkgrel=1
 pkgdesc='OLED screen curtain, LayerOverlay key-combo lock, and OLED care utility'
 arch=('x86_64' 'aarch64')

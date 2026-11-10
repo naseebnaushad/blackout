@@ -135,7 +135,11 @@ private slots:
         QString err;
         QVERIFY(Backend::installSkill(dir.path(), &err));
         QVERIFY(QFile::exists(dir.filePath(".agents/skills/blackout/SKILL.md")));
+#ifndef Q_OS_WIN
         QVERIFY(QFileInfo(dir.filePath(".claude/skills/blackout")).isSymLink());
+#else
+        QVERIFY(QFile::exists(dir.filePath(".claude/skills/blackout/SKILL.md")) || QFileInfo(dir.filePath(".claude/skills/blackout")).isSymLink());
+#endif
     }
 
     void pixelRefresherCyclesAndStopsOnEscape()
@@ -178,6 +182,7 @@ private slots:
 
     void themeFollowsHyprlandRounding()
     {
+#ifndef Q_OS_WIN
         QTemporaryDir dir;
         const QString response = dir.filePath("response.json"), command = dir.filePath("hyprctl");
         auto write = [](const QString &path, const QByteArray &data) {
@@ -192,6 +197,7 @@ private slots:
         QCOMPARE(theme.radius(), 0);
         QVERIFY(write(response, "{\"int\":6}"));
         QTRY_COMPARE(theme.radius(), 6);
+#endif
     }
 
     void translatorFallsBackToEnglish()

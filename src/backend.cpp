@@ -1,8 +1,12 @@
 #include "backend.h"
 
+#ifndef Q_OS_WIN
 #include <QDBusConnection>
 #include <QDBusMessage>
 #include <QDBusReply>
+#else
+#include <windows.h>
+#endif
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -46,7 +50,13 @@ void runCommandDetachedOrQuick(const QString &program, const QStringList &args, 
 
 Backend::Backend(const QString &settingsPath, QObject *parent)
     : QObject(parent),
-      m_settingsPath(settingsPath.isEmpty() ? QDir::homePath() + "/.config/blackout/settings.json" : settingsPath),
+      m_settingsPath(settingsPath.isEmpty() ? (
+#ifdef Q_OS_WIN
+          QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation) + "/settings.json"
+#else
+          QDir::homePath() + "/.config/blackout/settings.json"
+#endif
+      ) : settingsPath),
       m_enableSystemSideEffects(settingsPath.isEmpty()) {
     m_secondTimer.setInterval(1000);
     connect(&m_secondTimer, &QTimer::timeout, this, &Backend::onTick);
@@ -366,10 +376,14 @@ void Backend::setBrightnessPreset(int percent) {
 
 void Backend::toggleNightLight() {
     if (m_enableSystemSideEffects) {
+#ifdef Q_OS_WIN
+        QProcess::startDetached("cmd", {"/c", "start", "ms-settings:nightlight"});
+#else
         const QString bin = QStandardPaths::findExecutable("omarchy-toggle-nightlight");
         if (!bin.isEmpty()) {
             QProcess::startDetached(bin, {});
         }
+#endif
     }
     m_nightLightEnabled = !m_nightLightEnabled;
     emit nightLightEnabledChanged();
@@ -590,6 +604,11 @@ void Backend::saveSettings() const {
 
 QStringList Backend::checkProblems() const {
     QStringList problems;
+#ifdef Q_OS_WIN
+    if (QStandardPaths::findExecutable("powershell").isEmpty()) {
+        problems << tr("PowerShell is not found on PATH; brightness and DND control may be limited.");
+    }
+#else
     if (m_zeroBrightnessOnBlackout) {
         if (QStandardPaths::findExecutable("brightnessctl").isEmpty())
             problems << tr("brightnessctl is not installed; 0% hardware backlight control is unavailable.");
@@ -601,6 +620,7 @@ QStringList Backend::checkProblems() const {
         if (QStandardPaths::findExecutable("omarchy-shell").isEmpty())
             problems << tr("omarchy-shell is not found on PATH; notification silencing is unavailable.");
     }
+#endif
     return problems;
 }
 
@@ -675,7 +695,14 @@ bool Backend::installSkill(const QString &homeDir, QString *errorOut) {
     const QFileInfo linkInfo(linkPath);
     if (linkInfo.isSymLink() || !linkInfo.exists()) {
         QFile::remove(linkPath);
+#ifdef Q_OS_WIN
+        if (!QFile::link(agentSkillDir, linkPath)) {
+            QDir().mkpath(linkPath);
+            QFile::copy(agentSkillDir + "/SKILL.md", linkPath + "/SKILL.md");
+        }
+#else
         QFile::link(agentSkillDir, linkPath);
+#endif
     }
     return true;
 }
@@ -691,17 +718,31 @@ void Backend::refreshHardwareState() {
             m_savedBrightnessPercent = hwPct;
     }
 
+#ifndef Q_OS_WIN
     const QString nlOut = runCommandOutput("omarchy-toggle-nightlight", {"--status"});
     if (!nlOut.isEmpty()) {
         const QJsonObject obj = QJsonDocument::fromJson(nlOut.toUtf8()).object();
         m_nightLightEnabled = obj.value("enabled").toBool(false);
     }
+#endif
 }
 
 int Backend::readHardwareBrightnessPercent() const {
     if (!m_enableSystemSideEffects)
         return m_brightnessPercent;
 
+#ifdef Q_OS_WIN
+    // Query WmiMonitorBrightness on Windows laptops
+    const QString out = runCommandOutput("powershell", {
+        "-NoProfile", "-NonInteractive", "-Command",
+        "(Get-CimInstance -Namespace root/wmi -ClassName WmiMonitorBrightness -ErrorAction SilentlyContinue).CurrentBrightness"
+    }, 800);
+    bool ok = false;
+    const int val = out.toInt(&ok);
+    if (ok)
+        return std::clamp(val, 0, 100);
+    return m_brightnessPercent;
+#else
     // Try fast sysfs read first (/sys/class/backlight/amdgpu_bl1)
     QDir blDir("/sys/class/backlight");
     const QStringList entries = blDir.entryList(QDir::Dirs | QDir::NoDotAndDotDot);
@@ -728,16 +769,43 @@ int Backend::readHardwareBrightnessPercent() const {
             return std::clamp(val, 0, 100);
     }
     return -1;
+#endif
 }
 
 void Backend::applyHardwareBrightnessPercent(int percent) const {
     if (!m_enableSystemSideEffects)
         return;
     const int clamped = std::clamp(percent, 0, 100);
+#ifdef Q_OS_WIN
+    const QString psCmd = QString("(Get-CimInstance -Namespace root/wmi -ClassName WmiMonitorBrightnessMethods -ErrorAction SilentlyContinue).WmiSetBrightness(1, %1)").arg(clamped);
+    QProcess::startDetached("powershell", {
+        "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", psCmd
+    });
+#else
     runCommandDetachedOrQuick("brightnessctl", {"-q", "set", QString("%1%").arg(clamped)});
+#endif
 }
 
 void Backend::applyBlackoutProtection() {
+#ifdef Q_OS_WIN
+    if (m_silenceNotificationsOnBlackout && m_enableSystemSideEffects) {
+        QProcess::startDetached("powershell", {
+            "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command",
+            "Set-ItemProperty -Path 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Notifications\\Settings' -Name 'NOC_GLOBAL_SETTING_TOASTS_ENABLED' -Value 0 -Type DWord -ErrorAction SilentlyContinue"
+        });
+        m_dndEnabledByUs = true;
+    }
+    if (m_zeroBrightnessOnBlackout) {
+        const int currentPct = readHardwareBrightnessPercent();
+        if (currentPct > 0) {
+            m_savedBrightnessPercent = currentPct;
+            m_brightnessPercent = currentPct;
+            saveSettings();
+        }
+        applyHardwareBrightnessPercent(0);
+        m_brightnessZeroedByUs = true;
+    }
+#else
     if (m_silenceNotificationsOnBlackout) {
         if (m_enableSystemSideEffects) {
             const QString state = runCommandOutput("omarchy-shell", {"notifications", "isDnd"});
@@ -761,9 +829,26 @@ void Backend::applyBlackoutProtection() {
         applyHardwareBrightnessPercent(0);
         m_brightnessZeroedByUs = true;
     }
+#endif
 }
 
 void Backend::restoreBlackoutProtection() {
+#ifdef Q_OS_WIN
+    if (m_brightnessZeroedByUs) {
+        const int target = std::max(5, m_savedBrightnessPercent);
+        applyHardwareBrightnessPercent(target);
+        m_brightnessPercent = target;
+        m_brightnessZeroedByUs = false;
+        emit brightnessPercentChanged();
+    }
+    if (m_dndEnabledByUs && m_enableSystemSideEffects) {
+        QProcess::startDetached("powershell", {
+            "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command",
+            "Set-ItemProperty -Path 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Notifications\\Settings' -Name 'NOC_GLOBAL_SETTING_TOASTS_ENABLED' -Value 1 -Type DWord -ErrorAction SilentlyContinue"
+        });
+        m_dndEnabledByUs = false;
+    }
+#else
     if (m_brightnessZeroedByUs) {
         const int target = std::max(5, m_savedBrightnessPercent);
         applyHardwareBrightnessPercent(target);
@@ -780,6 +865,7 @@ void Backend::restoreBlackoutProtection() {
         m_dndEnabledByUs = false;
         m_dndWasOffBeforeBlackout = false;
     }
+#endif
 }
 
 void Backend::acquireInhibit() {
@@ -789,6 +875,12 @@ void Backend::acquireInhibit() {
         return;
     }
 
+#ifdef Q_OS_WIN
+    // Keep background processing, network, and execution alive while blackout is on.
+    SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_AWAYMODE_REQUIRED);
+    m_inhibiting = true;
+    emit inhibitingChanged();
+#else
     bool gotAny = false;
 
     // 1. Desktop ScreenSaver D-Bus interface (inhibits idle/screensaver/DPMS).
@@ -822,9 +914,19 @@ void Backend::acquireInhibit() {
 
     m_inhibiting = gotAny;
     emit inhibitingChanged();
+#endif
 }
 
 void Backend::releaseInhibit() {
+#ifdef Q_OS_WIN
+    if (m_enableSystemSideEffects) {
+        SetThreadExecutionState(ES_CONTINUOUS);
+    }
+    if (m_inhibiting) {
+        m_inhibiting = false;
+        emit inhibitingChanged();
+    }
+#else
     if (m_screensaverCookie != 0 && m_enableSystemSideEffects) {
         QDBusMessage uninhibit = QDBusMessage::createMethodCall(
             "org.freedesktop.ScreenSaver",
@@ -840,4 +942,5 @@ void Backend::releaseInhibit() {
         m_inhibiting = false;
         emit inhibitingChanged();
     }
+#endif
 }

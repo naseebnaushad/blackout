@@ -1,4 +1,9 @@
-QT += core gui quick quickcontrols2 testlib dbus
+QT += core gui quick quickcontrols2 testlib
+
+unix:!macx {
+    QT += dbus
+}
+
 CONFIG += c++17 testcase
 TARGET = blackout_tests
 TEMPLATE = app

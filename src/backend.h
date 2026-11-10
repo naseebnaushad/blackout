@@ -1,6 +1,8 @@
 #pragma once
 
+#ifndef Q_OS_WIN
 #include <QDBusUnixFileDescriptor>
+#endif
 #include <QJsonObject>
 #include <QList>
 #include <QObject>
@@ -185,8 +187,10 @@ private:
     QList<SettingsSnapshot> m_undoStack;
     QList<SettingsSnapshot> m_redoStack;
 
+#ifndef Q_OS_WIN
     uint m_screensaverCookie = 0;
     QDBusUnixFileDescriptor m_loginInhibitFd;
+#endif
 
     QTimer m_secondTimer;
     QTimer m_wrongKeyTimer;

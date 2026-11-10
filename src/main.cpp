@@ -1,6 +1,10 @@
 // blackout — OLED screen curtain, LayerOverlay key-combo lock, and OLED care utility.
 
+#ifdef Q_OS_WIN
+#include <windows.h>
+#else
 #include <LayerShellQt/Window>
+#endif
 #include <QCommandLineParser>
 #include <QGuiApplication>
 #include <QIcon>
@@ -177,6 +181,12 @@ int runHeadlessCommand(const QString &cmd, const QStringList &positional, const 
 void configureLayerOverlayWindow(QQuickWindow *curtainWindow) {
     if (!curtainWindow)
         return;
+#ifdef Q_OS_WIN
+    curtainWindow->setFlags(Qt::Window | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint);
+    if (auto *screen = QGuiApplication::primaryScreen()) {
+        curtainWindow->setGeometry(screen->virtualGeometry());
+    }
+#else
     if (!QGuiApplication::platformName().contains("wayland", Qt::CaseInsensitive))
         return;
 
@@ -193,13 +203,23 @@ void configureLayerOverlayWindow(QQuickWindow *curtainWindow) {
         layerWin->setWantsToBeOnActiveScreen(true);
         layerWin->setActivateOnShow(true);
     }
+#endif
 }
 } // namespace
 
 int main(int argc, char *argv[]) {
+#ifdef Q_OS_WIN
+    SetConsoleCtrlHandler([](DWORD) -> BOOL {
+        QCoreApplication::quit();
+        return TRUE;
+    }, TRUE);
+    std::signal(SIGINT, handleUnixSignal);
+    std::signal(SIGTERM, handleUnixSignal);
+#else
     std::signal(SIGINT, handleUnixSignal);
     std::signal(SIGTERM, handleUnixSignal);
     std::signal(SIGHUP, handleUnixSignal);
+#endif
 
     // Headless commands run without a display server.
     if (isHeadlessCommand(argc, argv)) {
@@ -208,7 +228,7 @@ int main(int argc, char *argv[]) {
 
     QGuiApplication app(argc, argv);
     app.setApplicationName("blackout");
-    app.setApplicationVersion("0.2.0");
+    app.setApplicationVersion("0.2.1");
 
     // Matches the window to blackout.desktop, so the compositor (Wayland app_id)
     // and the launcher pick up the installed icon.
@@ -303,7 +323,15 @@ int main(int argc, char *argv[]) {
         if (curtainWindow) {
             if (overlayOn) {
                 configureLayerOverlayWindow(curtainWindow);
+#ifdef Q_OS_WIN
+                curtainWindow->showFullScreen();
+                HWND hwnd = (HWND)curtainWindow->winId();
+                if (hwnd) {
+                    SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+                }
+#else
                 curtainWindow->setVisible(true);
+#endif
                 curtainWindow->raise();
                 curtainWindow->requestActivate();
                 curtainWindow->setKeyboardGrabEnabled(true);
