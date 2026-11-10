@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Blackout
+Name[da]=Blackout
+Comment=OLED screen curtain and key-combo lock
+Comment[da]=OLED-skærmgardin og tastelås
+Exec=blackout %f
+Icon=blackout
+Terminal=false
+Categories=Utility;
+StartupWMClass=blackout
