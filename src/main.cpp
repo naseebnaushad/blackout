@@ -1,5 +1,11 @@
 // blackout — OLED screen curtain, LayerOverlay key-combo lock, and OLED care utility.
 
+#include <QtGlobal>
+
+#if defined(_WIN32) && !defined(Q_OS_WIN)
+#define Q_OS_WIN
+#endif
+
 #ifdef Q_OS_WIN
 #include <windows.h>
 #else

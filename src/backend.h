@@ -1,6 +1,12 @@
 #pragma once
 
-#ifndef Q_OS_WIN
+#include <QtGlobal>
+
+#if defined(_WIN32) && !defined(Q_OS_WIN)
+#define Q_OS_WIN
+#endif
+
+#if !defined(_WIN32) && !defined(Q_OS_WIN)
 #include <QDBusUnixFileDescriptor>
 #endif
 #include <QJsonObject>
@@ -187,7 +193,7 @@ private:
     QList<SettingsSnapshot> m_undoStack;
     QList<SettingsSnapshot> m_redoStack;
 
-#ifndef Q_OS_WIN
+#if !defined(_WIN32) && !defined(Q_OS_WIN)
     uint m_screensaverCookie = 0;
     QDBusUnixFileDescriptor m_loginInhibitFd;
 #endif
